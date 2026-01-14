@@ -1,1 +1,1 @@
-worker: python mb_exchange_bot_webgia.py
+worker: python mb_exchange_bot.py
