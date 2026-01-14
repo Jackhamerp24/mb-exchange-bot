@@ -2,20 +2,19 @@ import asyncio
 import json
 import logging
 import os
-import re
 from datetime import datetime, time
 from pathlib import Path
 from typing import Final
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 import aiohttp
-from bs4 import BeautifulSoup
 import pytz
 
 # Configuration
 TOKEN: Final = os.getenv("TELEGRAM_BOT_TOKEN", "7686247051:AAGPNEXLaWlKj0auBgVfpvpZXACYLwbgz0Y")
 BOT_USERNAME: Final = "@MBbankExchangeRate_bot"
-EXCHANGE_URL: Final = "https://webgia.com/ty-gia/mbbank/"
+# Using free exchangerate-api.com (no API key needed for basic access)
+EXCHANGE_URL: Final = "https://open.er-api.com/v6/latest/AUD"
 SUBSCRIBERS_FILE: Final = "subscribers.json"
 
 # Set up logging
@@ -54,65 +53,48 @@ def save_subscribers():
 
 async def scrape_aud_rate() -> dict:
     """
-    Scrapes webgia.com for MB Bank AUD to VND exchange rate.
+    Fetches AUD to VND exchange rate from exchangerate-api.com
     Returns a dict with rate and status.
     """
     try:
         async with aiohttp.ClientSession() as session:
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.9,vi;q=0.8',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             }
             
             async with session.get(EXCHANGE_URL, headers=headers, timeout=30) as response:
                 if response.status == 200:
-                    html = await response.text()
-                    soup = BeautifulSoup(html, 'html.parser')
+                    data = await response.json()
                     
-                    # Find the table with exchange rates
-                    table = soup.find('table')
-                    
-                    if not table:
+                    # Check if the API call was successful
+                    if data.get('result') == 'success':
+                        rates = data.get('rates', {})
+                        vnd_rate = rates.get('VND')
+                        
+                        if vnd_rate:
+                            # Format the rate nicely
+                            formatted_rate = f"{vnd_rate:,.2f}"
+                            
+                            return {
+                                'success': True,
+                                'rate': formatted_rate,
+                                'currency': 'AUD',
+                                'source': 'Global Market Rate'
+                            }
+                        else:
+                            return {
+                                'success': False,
+                                'error': 'VND rate not found in API response'
+                            }
+                    else:
                         return {
                             'success': False,
-                            'error': 'Exchange rate table not found on page'
+                            'error': f"API error: {data.get('error-type', 'Unknown error')}"
                         }
-                    
-                    # Find all rows
-                    rows = table.find_all('tr')
-                    
-                    for row in rows:
-                        cells = row.find_all('td')
-                        
-                        # We need at least 6 columns: Currency, Name, Buy Cash, Buy Transfer, Sell Cash, Sell Transfer
-                        if len(cells) >= 6:
-                            # Check if this is the AUD row
-                            currency_code = cells[0].get_text(strip=True)
-                            
-                            if 'AUD' in currency_code.upper():
-                                # Column 5 is "Bán chuyển khoản" (Sell Transfer)
-                                selling_rate = cells[5].get_text(strip=True)
-                                
-                                # Clean up the rate - remove any non-numeric characters except comma and dot
-                                selling_rate = re.sub(r'[^\d,.]', '', selling_rate)
-                                
-                                # Check if we got a valid rate
-                                if selling_rate and selling_rate != 'webgia.com':
-                                    return {
-                                        'success': True,
-                                        'rate': selling_rate,
-                                        'currency': 'AUD'
-                                    }
-                    
-                    return {
-                        'success': False,
-                        'error': 'AUD rate not found in the table. The website might have changed its structure.'
-                    }
                 else:
                     return {
                         'success': False,
-                        'error': f'Failed to fetch page. HTTP Status: {response.status}'
+                        'error': f'Failed to fetch rate. HTTP Status: {response.status}'
                     }
     except asyncio.TimeoutError:
         logger.error("Timeout while fetching exchange rate")
@@ -121,7 +103,7 @@ async def scrape_aud_rate() -> dict:
             'error': 'Request timeout. Please try again later.'
         }
     except Exception as e:
-        logger.error(f"Error scraping exchange rate: {e}")
+        logger.error(f"Error fetching exchange rate: {e}")
         return {
             'success': False,
             'error': f'Error: {str(e)}'
@@ -132,7 +114,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle the /start command"""
     await update.message.reply_text(
         "👋 <b>Welcome to MB Bank Exchange Rate Bot!</b>\n\n"
-        "This bot helps you monitor the AUD to VND exchange rate from MB Bank.\n\n"
+        "This bot helps you monitor the AUD to VND exchange rate.\n\n"
         "<b>Available commands:</b>\n"
         "💱 /rate - Get current AUD to VND rate\n"
         "🔔 /subscribe - Get daily rate updates at 9:00 AM (VN time)\n"
@@ -146,10 +128,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle the /help command"""
     await update.message.reply_text(
-        "🤖 <b>MB Bank Exchange Rate Bot - Help</b>\n\n"
+        "🤖 <b>AUD to VND Exchange Rate Bot - Help</b>\n\n"
         "<b>Commands:</b>\n\n"
         "💱 <b>/rate</b>\n"
-        "Get the current AUD to VND exchange rate (Bán ra - Chuyển khoản)\n\n"
+        "Get the current AUD to VND exchange rate from global markets\n\n"
         "🔔 <b>/subscribe</b>\n"
         "Subscribe to daily rate notifications at 9:00 AM Vietnam time\n\n"
         "🔕 <b>/unsubscribe</b>\n"
@@ -157,28 +139,29 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "❓ <b>/help</b>\n"
         "Show this help message\n\n"
         "<b>About the Rate:</b>\n"
-        "The bot fetches the 'Bán ra (Chuyển khoản)' rate, which is the selling/transfer rate "
-        "from MB Bank. This is the rate at which the bank sells AUD for VND in transfers.\n\n"
-        "<b>Note:</b> Exchange rates are updated regularly and may change throughout the day.",
+        "The bot fetches global market exchange rates from a reliable API. "
+        "Rates are updated regularly throughout the day.\n\n"
+        "<b>Note:</b> This is the market rate. Bank rates may differ slightly.",
         parse_mode='HTML'
     )
 
 
 async def rate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle the /rate command - fetch and display current rate"""
-    await update.message.reply_text("⏳ Fetching current AUD to VND rate from MB Bank...")
+    await update.message.reply_text("⏳ Fetching current AUD to VND rate...")
     
     result = await scrape_aud_rate()
     current_time = datetime.now(pytz.timezone('Asia/Ho_Chi_Minh')).strftime('%Y-%m-%d %H:%M:%S')
     
     if result['success']:
         message = (
-            f"💱 <b>MB Bank Exchange Rate</b>\n\n"
+            f"💱 <b>AUD to VND Exchange Rate</b>\n\n"
             f"🇦🇺 Currency: <b>AUD → VND</b> 🇻🇳\n"
-            f"📊 Rate (Bán ra - Chuyển khoản):\n"
+            f"📊 Current Market Rate:\n"
             f"<b>{result['rate']} VND</b>\n\n"
             f"🕐 Updated: {current_time}\n"
-            f"📍 Source: MB Bank via WebGia.com"
+            f"📍 Source: Global Market Data\n\n"
+            f"<i>Note: Bank rates (like MB Bank) may differ slightly from market rates.</i>"
         )
     else:
         message = (
@@ -249,11 +232,11 @@ async def send_daily_rate(context: ContextTypes.DEFAULT_TYPE):
     if result['success']:
         message = (
             f"🌅 <b>Daily Exchange Rate Update</b>\n\n"
-            f"💱 MB Bank - AUD → VND\n"
-            f"📊 Rate (Bán ra - Chuyển khoản):\n"
+            f"💱 AUD → VND\n"
+            f"📊 Current Market Rate:\n"
             f"<b>{result['rate']} VND</b>\n\n"
             f"🕐 {current_time} (Vietnam Time)\n"
-            f"📍 Source: MB Bank\n\n"
+            f"📍 Source: Global Market Data\n\n"
             f"💡 Use /rate to check anytime!"
         )
     else:
@@ -317,11 +300,11 @@ def main():
     )
     
     logger.info("=" * 60)
-    logger.info("MB Bank Exchange Rate Bot started successfully!")
+    logger.info("AUD to VND Exchange Rate Bot started successfully!")
     logger.info(f"Bot username: {BOT_USERNAME}")
     logger.info(f"Loaded {len(subscribed_users)} subscribers")
     logger.info(f"Daily notifications scheduled for 9:00 AM Vietnam time")
-    logger.info(f"Using alternative source: {EXCHANGE_URL}")
+    logger.info(f"Using API: {EXCHANGE_URL}")
     logger.info("=" * 60)
     
     # Start the bot
