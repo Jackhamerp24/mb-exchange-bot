@@ -104,38 +104,45 @@ def scrape_mbbank_rate_chogia() -> dict:
                                         'rate_transfer': sell_transfer,
                                         'rate_cash': sell_cash,
                                         'buy_rate': buy_cash,
-                                        'source': 'MB Bank (via ChoGia.vn)'
+                                        'source': 'MB Bank (qua ChoGia.vn)'
                                     }
             
             return {
                 'success': False,
-                'error': 'Could not find MB Bank rate in table'
+                'error': 'Không tìm thấy tỷ giá MB Bank trong bảng'
             }
         else:
             return {
                 'success': False,
-                'error': f'Failed to fetch page. HTTP Status: {response.status_code}'
+                'error': f'Không thể tải trang. HTTP Status: {response.status_code}'
             }
             
     except Exception as e:
         logger.error(f"Error scraping chogia.vn: {e}")
         return {
             'success': False,
-            'error': f'Error: {str(e)}'
+            'error': f'Lỗi: {str(e)}'
         }
+
+
+def format_number(number: float) -> str:
+    """Format number with thousand separators"""
+    return "{:,.0f}".format(number).replace(',', '.')
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle the /start command"""
     await update.message.reply_text(
-        "👋 <b>Welcome to MB Bank Exchange Rate Bot!</b>\n\n"
-        "This bot monitors the AUD to VND exchange rate from MB Bank.\n\n"
-        "<b>Available commands:</b>\n"
-        "💱 /rate - Get current AUD to VND rate\n"
-        "🔔 /subscribe - Get daily rate updates at 9:00 AM (VN time)\n"
-        "🔕 /unsubscribe - Stop daily updates\n"
-        "❓ /help - Show detailed help\n\n"
-        "Start by typing /rate to see the current exchange rate!",
+        "👋 <b>Chào mừng đến với Bot Tỷ Giá MB Bank!</b>\n\n"
+        "Bot này giúp bạn theo dõi tỷ giá AUD sang VND của MB Bank.\n\n"
+        "<b>Các lệnh có sẵn:</b>\n"
+        "💱 /tygia - Xem tỷ giá AUD hiện tại\n"
+        "🔄 /chuyendoi [số tiền] - Chuyển đổi AUD sang VND\n"
+        "   Ví dụ: /chuyendoi 2000\n"
+        "🔔 /dangky - Nhận thông báo tỷ giá hàng ngày lúc 9:00 sáng\n"
+        "🔕 /huy - Ngừng nhận thông báo hàng ngày\n"
+        "❓ /trogiup - Hiển thị trợ giúp chi tiết\n\n"
+        "Bắt đầu bằng cách gõ /tygia để xem tỷ giá hiện tại!",
         parse_mode='HTML'
     )
 
@@ -143,100 +150,181 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle the /help command"""
     await update.message.reply_text(
-        "🤖 <b>MB Bank Exchange Rate Bot - Help</b>\n\n"
-        "<b>Commands:</b>\n\n"
-        "💱 <b>/rate</b>\n"
-        "Get the current AUD to VND exchange rate from MB Bank\n\n"
-        "🔔 <b>/subscribe</b>\n"
-        "Subscribe to daily rate notifications at 9:00 AM Vietnam time\n\n"
-        "🔕 <b>/unsubscribe</b>\n"
-        "Unsubscribe from daily notifications\n\n"
-        "❓ <b>/help</b>\n"
-        "Show this help message\n\n"
-        "<b>Rate Information:</b>\n"
-        "• <b>Bán ra (Chuyển khoản)</b> - Transfer selling rate (main rate)\n"
-        "• <b>Bán ra (Tiền mặt)</b> - Cash selling rate\n"
-        "• <b>Mua vào</b> - Buying rate\n\n"
-        "<b>Source:</b> Data from ChoGia.vn, updated from MB Bank",
+        "🤖 <b>Bot Tỷ Giá MB Bank - Trợ Giúp</b>\n\n"
+        "<b>Các lệnh:</b>\n\n"
+        "💱 <b>/tygia</b>\n"
+        "Xem tỷ giá AUD sang VND hiện tại của MB Bank\n\n"
+        "🔄 <b>/chuyendoi [số tiền]</b>\n"
+        "Tính toán số tiền VND cần trả khi mua AUD từ MB Bank\n"
+        "Ví dụ: /chuyendoi 2000 (mua 2,000 AUD)\n\n"
+        "🔔 <b>/dangky</b>\n"
+        "Đăng ký nhận thông báo tỷ giá hàng ngày lúc 9:00 sáng\n\n"
+        "🔕 <b>/huy</b>\n"
+        "Hủy đăng ký nhận thông báo hàng ngày\n\n"
+        "❓ <b>/trogiup</b>\n"
+        "Hiển thị trợ giúp này\n\n"
+        "<b>Thông tin về tỷ giá:</b>\n"
+        "• <b>Bán ra (Chuyển khoản)</b> - Giá MB Bank bán AUD (chuyển khoản)\n"
+        "• <b>Bán ra (Tiền mặt)</b> - Giá MB Bank bán AUD (tiền mặt)\n"
+        "• <b>Mua vào</b> - Giá MB Bank mua AUD từ bạn\n\n"
+        "<b>Nguồn dữ liệu:</b> ChoGia.vn, cập nhật từ MB Bank",
         parse_mode='HTML'
     )
 
 
 async def rate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle the /rate command - fetch and display current rate"""
-    await update.message.reply_text("⏳ Fetching current AUD to VND rate from MB Bank...")
+    """Handle the /tygia command - fetch and display current rate"""
+    await update.message.reply_text("⏳ Đang lấy tỷ giá AUD sang VND từ MB Bank...")
     
     # Run synchronous scraping in executor
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(None, scrape_mbbank_rate_chogia)
     
-    current_time = datetime.now(pytz.timezone('Asia/Ho_Chi_Minh')).strftime('%Y-%m-%d %H:%M:%S')
+    current_time = datetime.now(pytz.timezone('Asia/Ho_Chi_Minh')).strftime('%d/%m/%Y %H:%M:%S')
     
     if result['success']:
         message = (
-            f"💱 <b>MB Bank Exchange Rate</b>\n\n"
-            f"🇦🇺 Currency: <b>AUD → VND</b> 🇻🇳\n\n"
+            f"💱 <b>Tỷ Giá MB Bank</b>\n\n"
+            f"🇦🇺 Ngoại tệ: <b>AUD → VND</b> 🇻🇳\n\n"
             f"📊 <b>Bán ra (Chuyển khoản):</b>\n"
             f"<b>{result['rate_transfer']}</b> VND\n\n"
             f"💵 <b>Bán ra (Tiền mặt):</b>\n"
             f"{result['rate_cash']} VND\n\n"
             f"💰 <b>Mua vào:</b>\n"
             f"{result['buy_rate']} VND\n\n"
-            f"🕐 Updated: {current_time}\n"
-            f"📍 Source: {result['source']}"
+            f"🕐 Cập nhật: {current_time}\n"
+            f"📍 Nguồn: {result['source']}\n\n"
+            f"💡 Dùng /chuyendoi [số tiền] để tính toán\n"
+            f"Ví dụ: /chuyendoi 2000"
         )
     else:
         message = (
-            f"❌ <b>Error Fetching Rate</b>\n\n"
+            f"❌ <b>Lỗi khi lấy tỷ giá</b>\n\n"
             f"{result['error']}\n\n"
-            f"Please try again later."
+            f"Vui lòng thử lại sau."
+        )
+    
+    await update.message.reply_text(message, parse_mode='HTML')
+
+
+async def convert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the /chuyendoi command - convert AUD to VND"""
+    
+    # Check if amount is provided
+    if not context.args or len(context.args) == 0:
+        await update.message.reply_text(
+            "⚠️ <b>Vui lòng nhập số tiền AUD cần chuyển đổi</b>\n\n"
+            "Cách dùng: /chuyendoi [số tiền]\n\n"
+            "Ví dụ:\n"
+            "• /chuyendoi 2000\n"
+            "• /chuyendoi 5000\n"
+            "• /chuyendoi 10000",
+            parse_mode='HTML'
+        )
+        return
+    
+    # Parse the amount
+    try:
+        amount_str = context.args[0].replace(',', '').replace('.', '')
+        amount = float(amount_str)
+        
+        if amount <= 0:
+            await update.message.reply_text(
+                "⚠️ Số tiền phải lớn hơn 0!\n\n"
+                "Vui lòng nhập số tiền hợp lệ."
+            )
+            return
+            
+    except ValueError:
+        await update.message.reply_text(
+            "⚠️ <b>Số tiền không hợp lệ!</b>\n\n"
+            "Vui lòng nhập số tiền là một con số.\n\n"
+            "Ví dụ: /chuyendoi 2000",
+            parse_mode='HTML'
+        )
+        return
+    
+    # Fetch current rate
+    await update.message.reply_text("⏳ Đang lấy tỷ giá hiện tại...")
+    
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, scrape_mbbank_rate_chogia)
+    
+    current_time = datetime.now(pytz.timezone('Asia/Ho_Chi_Minh')).strftime('%d/%m/%Y %H:%M:%S')
+    
+    if result['success']:
+        # Parse the rate
+        rate_str = result['rate_transfer'].replace(',', '').replace('.', '')
+        rate = float(rate_str)
+        
+        # Calculate VND amount needed
+        vnd_amount = amount * rate
+        
+        message = (
+            f"💱 <b>Chuyển Đổi AUD sang VND</b>\n\n"
+            f"🇦🇺 Số tiền AUD muốn mua: <b>{format_number(amount)} AUD</b>\n\n"
+            f"📊 Tỷ giá MB Bank (Chuyển khoản):\n"
+            f"<b>{result['rate_transfer']}</b> VND/AUD\n\n"
+            f"💰 <b>Số tiền VND cần trả:</b>\n"
+            f"<code>{format_number(vnd_amount)} VND</code>\n\n"
+            f"📝 <b>Chi tiết tính toán:</b>\n"
+            f"{format_number(amount)} AUD × {result['rate_transfer']} = {format_number(vnd_amount)} VND\n\n"
+            f"🕐 Tỷ giá lúc: {current_time}\n"
+            f"📍 Nguồn: {result['source']}\n\n"
+            f"⚠️ <i>Lưu ý: Đây là tỷ giá tham khảo. Tỷ giá thực tế có thể thay đổi khi giao dịch.</i>"
+        )
+    else:
+        message = (
+            f"❌ <b>Không thể lấy tỷ giá</b>\n\n"
+            f"{result['error']}\n\n"
+            f"Vui lòng thử lại sau."
         )
     
     await update.message.reply_text(message, parse_mode='HTML')
 
 
 async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle the /subscribe command"""
+    """Handle the /dangky command"""
     user_id = update.effective_user.id
-    user_name = update.effective_user.first_name or "User"
+    user_name = update.effective_user.first_name or "Bạn"
     
     if user_id in subscribed_users:
         await update.message.reply_text(
-            f"✅ Hi {user_name}! You are already subscribed to daily rate updates.\n\n"
-            "You will receive notifications every day at 9:00 AM (Vietnam time)."
+            f"✅ Xin chào {user_name}! Bạn đã đăng ký nhận thông báo tỷ giá hàng ngày.\n\n"
+            "Bạn sẽ nhận thông báo mỗi ngày lúc 9:00 sáng (giờ Việt Nam)."
         )
     else:
         subscribed_users.add(user_id)
         save_subscribers()
         await update.message.reply_text(
-            f"✅ <b>Successfully subscribed!</b>\n\n"
-            f"Hi {user_name}, you will now receive daily AUD to VND exchange rate updates "
-            f"at 9:00 AM (Vietnam time).\n\n"
-            f"Use /unsubscribe anytime to stop receiving updates.",
+            f"✅ <b>Đăng ký thành công!</b>\n\n"
+            f"Xin chào {user_name}, từ giờ bạn sẽ nhận thông báo tỷ giá AUD sang VND "
+            f"mỗi ngày lúc 9:00 sáng (giờ Việt Nam).\n\n"
+            f"Dùng /huy để ngừng nhận thông báo.",
             parse_mode='HTML'
         )
         logger.info(f"User {user_id} ({user_name}) subscribed to daily updates")
 
 
 async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle the /unsubscribe command"""
+    """Handle the /huy command"""
     user_id = update.effective_user.id
-    user_name = update.effective_user.first_name or "User"
+    user_name = update.effective_user.first_name or "Bạn"
     
     if user_id in subscribed_users:
         subscribed_users.remove(user_id)
         save_subscribers()
         await update.message.reply_text(
-            f"✅ <b>Successfully unsubscribed</b>\n\n"
-            f"Hi {user_name}, you will no longer receive daily rate updates.\n\n"
-            f"Use /subscribe anytime to start receiving updates again.",
+            f"✅ <b>Hủy đăng ký thành công</b>\n\n"
+            f"Xin chào {user_name}, bạn sẽ không còn nhận thông báo tỷ giá hàng ngày.\n\n"
+            f"Dùng /dangky để đăng ký lại.",
             parse_mode='HTML'
         )
         logger.info(f"User {user_id} ({user_name}) unsubscribed from daily updates")
     else:
         await update.message.reply_text(
-            f"ℹ️ Hi {user_name}, you are not currently subscribed to daily updates.\n\n"
-            f"Use /subscribe to start receiving daily rate updates."
+            f"ℹ️ Xin chào {user_name}, bạn chưa đăng ký nhận thông báo hàng ngày.\n\n"
+            f"Dùng /dangky để bắt đầu nhận thông báo."
         )
 
 
@@ -252,23 +340,24 @@ async def send_daily_rate(context: ContextTypes.DEFAULT_TYPE):
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(None, scrape_mbbank_rate_chogia)
     
-    current_time = datetime.now(pytz.timezone('Asia/Ho_Chi_Minh')).strftime('%Y-%m-%d %H:%M:%S')
+    current_time = datetime.now(pytz.timezone('Asia/Ho_Chi_Minh')).strftime('%d/%m/%Y %H:%M:%S')
     
     if result['success']:
         message = (
-            f"🌅 <b>Daily Exchange Rate Update</b>\n\n"
+            f"🌅 <b>Thông Báo Tỷ Giá Hàng Ngày</b>\n\n"
             f"💱 MB Bank - AUD → VND\n\n"
-            f"📊 <b>Bán ra (Chuyển khoản):</b>\n"
-            f"<b>{result['rate_transfer']}</b> VND\n\n"
-            f"🕐 {current_time} (Vietnam Time)\n"
-            f"📍 Source: {result['source']}\n\n"
-            f"💡 Use /rate to check anytime!"
+            f"💵 <b>Bán ra (Tiền mặt):</b>\n"
+            f"{result['rate_cash']} VND\n\n"
+            f"🕐 {current_time} (Giờ Việt Nam)\n"
+            f"📍 Nguồn: {result['source']}\n\n"
+            f"💡 Dùng /tygia để kiểm tra bất cứ lúc nào!\n"
+            f"💡 Dùng /chuyendoi [số tiền] để tính toán!"
         )
     else:
         message = (
-            f"⚠️ <b>Daily Rate Update - Error</b>\n\n"
-            f"Unable to fetch today's rate:\n{result['error']}\n\n"
-            f"Use /rate to try again manually."
+            f"⚠️ <b>Thông Báo Tỷ Giá - Có Lỗi</b>\n\n"
+            f"Không thể lấy tỷ giá hôm nay:\n{result['error']}\n\n"
+            f"Dùng /tygia để thử lại thủ công."
         )
     
     success_count = 0
@@ -301,14 +390,23 @@ def main():
     
     application = Application.builder().token(TOKEN).build()
     
+    # Add command handlers
     application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("rate", rate_command))
-    application.add_handler(CommandHandler("subscribe", subscribe_command))
-    application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
+    application.add_handler(CommandHandler("trogiup", help_command))
+    application.add_handler(CommandHandler("help", help_command))  # English alias
+    application.add_handler(CommandHandler("tygia", rate_command))
+    application.add_handler(CommandHandler("rate", rate_command))  # English alias
+    application.add_handler(CommandHandler("chuyendoi", convert_command))
+    application.add_handler(CommandHandler("convert", convert_command))  # English alias
+    application.add_handler(CommandHandler("dangky", subscribe_command))
+    application.add_handler(CommandHandler("subscribe", subscribe_command))  # English alias
+    application.add_handler(CommandHandler("huy", unsubscribe_command))
+    application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))  # English alias
     
+    # Add error handler
     application.add_error_handler(error_handler)
     
+    # Schedule daily job at 9:00 AM Vietnam time
     job_queue = application.job_queue
     vietnam_tz = pytz.timezone('Asia/Ho_Chi_Minh')
     scheduled_time = time(hour=9, minute=0, tzinfo=vietnam_tz)
@@ -320,11 +418,11 @@ def main():
     )
     
     logger.info("=" * 60)
-    logger.info("MB Bank Exchange Rate Bot started successfully!")
-    logger.info(f"Bot username: {BOT_USERNAME}")
-    logger.info(f"Loaded {len(subscribed_users)} subscribers")
-    logger.info(f"Daily notifications scheduled for 9:00 AM Vietnam time")
-    logger.info(f"Using ChoGia.vn as source: {CHOGIA_URL}")
+    logger.info("Bot Tỷ Giá MB Bank khởi động thành công!")
+    logger.info(f"Tên bot: {BOT_USERNAME}")
+    logger.info(f"Đã tải {len(subscribed_users)} người đăng ký")
+    logger.info(f"Thông báo hàng ngày vào lúc 9:00 sáng giờ Việt Nam")
+    logger.info(f"Sử dụng nguồn: {CHOGIA_URL}")
     logger.info("=" * 60)
     
     application.run_polling(allowed_updates=Update.ALL_TYPES)
